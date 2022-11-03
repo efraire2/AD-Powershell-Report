@@ -99,3 +99,34 @@ Write-Host "__________________________________" -ForegroundColor White
 (Write-Host -NoNewline "Amount of Days for User Password Expiration Report: " -ForegroundColor Yellow), (Write-Host  $DaysUntilPWExpireINT -ForegroundColor White)
 (Write-Host -NoNewline "Amount of Days for Newly Modified AD Objects Report: " -ForegroundColor Yellow), (Write-Host  $ADModNumber -ForegroundColor White)
 Write-Host "__________________________________" -ForegroundColor White
+
+function LastLogonConvert ($ftDate)
+{
+	
+	$Date = [DateTime]::FromFileTime($ftDate)
+	
+	if ($Date -lt (Get-Date '1/1/1900') -or $date -eq 0 -or $date -eq $null)
+	{
+		
+		"Never"
+	}
+	
+	else
+	{
+		
+		$Date
+	}
+	
+} #End function LastLogonConvert
+
+#Check for ReportHTML Module
+$Mod = Get-Module -ListAvailable -Name "ReportHTML"
+
+If ($null -eq $Mod)
+{
+	
+	Write-Host "ReportHTML Module is not present, attempting to install it"
+	
+	Install-Module -Name ReportHTML -Force
+	Import-Module ReportHTML -ErrorAction SilentlyContinue
+}
