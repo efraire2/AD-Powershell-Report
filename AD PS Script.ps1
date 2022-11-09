@@ -219,4 +219,331 @@ $TOPGroupsTable = New-Object 'System.Collections.Generic.List[System.Object]'
 $TOPComputersTable = New-Object 'System.Collections.Generic.List[System.Object]'
 $GraphComputerOS = New-Object 'System.Collections.Generic.List[System.Object]'
 
+#Get all users right away. Instead of doing several lookups, we will use this object to look up all the information needed.
+$AllUsers = Get-ADUser -Filter * -Properties *
 
+$GPOs = Get-GPO -All | Select-Object DisplayName, GPOStatus, ModificationTime, @{ Label = "ComputerVersion"; Expression = { $_.computer.dsversion } }, @{ Label = "UserVersion"; Expression = { $_.user.dsversion } }
+
+<###########################
+         Dashboard
+############################>
+
+Write-Host "Working on Dashboard Report..." -ForegroundColor Green
+
+$dte = (Get-Date).AddDays(- $ADModNumber)
+
+$ADObjs = Get-ADObject -Filter { whenchanged -gt $dte -and ObjectClass -ne "domainDNS" -and ObjectClass -ne "rIDManager" -and ObjectClass -ne "rIDSet" } -Properties *
+
+foreach ($ADObj in $ADObjs)
+{
+	
+	if ($ADObj.ObjectClass -eq "GroupPolicyContainer")
+	{
+		
+		$Name = $ADObj.DisplayName
+	}
+	
+	else
+	{
+		
+		$Name = $ADObj.Name
+	}
+	
+	$obj = [PSCustomObject]@{
+		
+		'Name'	      = $Name
+		'Object Type' = $ADObj.ObjectClass
+		'When Changed' = $ADObj.WhenChanged
+	}
+	
+	$ADObjectTable.Add($obj)
+}
+if (($ADObjectTable).Count -eq 0)
+{
+	
+	$Obj = [PSCustomObject]@{
+		
+		Information = 'Information: No AD Objects have been modified recently'
+	}
+	
+	$ADObjectTable.Add($obj)
+}
+
+
+$ADRecycleBinStatus = (Get-ADOptionalFeature -Filter 'name -like "Recycle Bin Feature"').EnabledScopes
+
+if ($ADRecycleBinStatus.Count -lt 1)
+{
+	
+	$ADRecycleBin = "Disabled"
+}
+
+else
+{
+	
+	$ADRecycleBin = "Enabled"
+}
+
+#Company Information
+$ADInfo = Get-ADDomain
+$ForestObj = Get-ADForest
+$DomainControllerobj = Get-ADDomain
+$Forest = $ADInfo.Forest
+$InfrastructureMaster = $DomainControllerobj.InfrastructureMaster
+$RIDMaster = $DomainControllerobj.RIDMaster
+$PDCEmulator = $DomainControllerobj.PDCEmulator
+$DomainNamingMaster = $ForestObj.DomainNamingMaster
+$SchemaMaster = $ForestObj.SchemaMaster
+
+$obj = [PSCustomObject]@{
+	
+	'Domain'			    = $Forest
+	'AD Recycle Bin'	    = $ADRecycleBin
+	'Infrastructure Master' = $InfrastructureMaster
+	'RID Master'		    = $RIDMaster
+	'PDC Emulator'		    = $PDCEmulator
+	'Domain Naming Master'  = $DomainNamingMaster
+	'Schema Master'		    = $SchemaMaster
+}
+
+$CompanyInfoTable.Add($obj)
+
+if (($CompanyInfoTable).Count -eq 0)
+{
+	
+	$Obj = [PSCustomObject]@{
+		
+		Information = 'Information: Could not get items for table'
+	}
+	$CompanyInfoTable.Add($obj)
+}
+
+#Get newly created users
+$When = ((Get-Date).AddDays(- $UserCreatedDays)).Date
+$NewUsers = $AllUsers | Where-Object { $_.whenCreated -ge $When }
+
+foreach ($Newuser in $Newusers)
+{
+	
+	$obj = [PSCustomObject]@{
+		
+		'Name' = $Newuser.Name
+		'Enabled' = $Newuser.Enabled
+		'Creation Date' = $Newuser.whenCreated
+	}
+	
+	$NewCreatedUsersTable.Add($obj)
+}
+if (($NewCreatedUsersTable).Count -eq 0)
+{
+	
+	$Obj = [PSCustomObject]@{
+		
+		Information = 'Information: No new users have been recently created'
+	}
+	$NewCreatedUsersTable.Add($obj)
+}
+
+
+
+#Get Domain Admins
+$DomainAdminMembers = Get-ADGroupMember "Domain Admins"
+
+foreach ($DomainAdminMember in $DomainAdminMembers)
+{
+	
+	$Name = $DomainAdminMember.Name
+	$Type = $DomainAdminMember.ObjectClass
+	$Enabled = ($AllUsers | Where-Object { $_.Name -eq $Name }).Enabled
+	
+	$obj = [PSCustomObject]@{
+		
+		'Name'    = $Name
+		'Enabled' = $Enabled
+		'Type'    = $Type
+	}
+	
+	$DomainAdminTable.Add($obj)
+}
+
+if (($DomainAdminTable).Count -eq 0)
+{
+	
+	$Obj = [PSCustomObject]@{
+		
+		Information = 'Information: No Domain Admin Members were found'
+	}
+	$DomainAdminTable.Add($obj)
+}
+
+
+#Get Enterprise Admins
+$EnterpriseAdminsMembers = Get-ADGroupMember "Enterprise Admins" -Server $SchemaMaster
+
+foreach ($EnterpriseAdminsMember in $EnterpriseAdminsMembers)
+{
+	
+	$Name = $EnterpriseAdminsMember.Name
+	$Type = $EnterpriseAdminsMember.ObjectClass
+	$Enabled = ($AllUsers | Where-Object { $_.Name -eq $Name }).Enabled
+	
+	$obj = [PSCustomObject]@{
+		
+		'Name'    = $Name
+		'Enabled' = $Enabled
+		'Type'    = $Type
+	}
+	
+	$EnterpriseAdminTable.Add($obj)
+}
+
+if (($EnterpriseAdminTable).Count -eq 0)
+{
+	
+	$Obj = [PSCustomObject]@{
+		
+		Information = 'Information: Enterprise Admin members were found'
+	}
+	$EnterpriseAdminTable.Add($obj)
+}
+
+$DefaultComputersOU = (Get-ADDomain).computerscontainer
+$DefaultComputers = Get-ADComputer -Filter * -Properties * -SearchBase "$DefaultComputersOU"
+
+foreach ($DefaultComputer in $DefaultComputers)
+{
+	
+	$obj = [PSCustomObject]@{
+		
+		'Name' = $DefaultComputer.Name
+		'Enabled' = $DefaultComputer.Enabled
+		'Operating System' = $DefaultComputer.OperatingSystem
+		'Modified Date' = $DefaultComputer.Modified
+		'Password Last Set' = $DefaultComputer.PasswordLastSet
+		'Protect from Deletion' = $DefaultComputer.ProtectedFromAccidentalDeletion
+	}
+	
+	$DefaultComputersinDefaultOUTable.Add($obj)
+}
+
+if (($DefaultComputersinDefaultOUTable).Count -eq 0)
+{
+	
+	$Obj = [PSCustomObject]@{
+		
+		Information = 'Information: No computers were found in the Default OU'
+	}
+	$DefaultComputersinDefaultOUTable.Add($obj)
+}
+
+$DefaultUsersOU = (Get-ADDomain).UsersContainer
+$DefaultUsers = $Allusers | Where-Object { $_.DistinguishedName -like "*$($DefaultUsersOU)" } | Select-Object Name, UserPrincipalName, Enabled, ProtectedFromAccidentalDeletion, EmailAddress, @{ Name = 'lastlogon'; Expression = { LastLogonConvert $_.lastlogon } }, DistinguishedName
+
+foreach ($DefaultUser in $DefaultUsers)
+{
+	
+	$obj = [PSCustomObject]@{
+		
+		'Name' = $DefaultUser.Name
+		'UserPrincipalName' = $DefaultUser.UserPrincipalName
+		'Enabled' = $DefaultUser.Enabled
+		'Protected from Deletion' = $DefaultUser.ProtectedFromAccidentalDeletion
+		'Last Logon' = $DefaultUser.LastLogon
+		'Email Address' = $DefaultUser.EmailAddress
+	}
+	
+	$DefaultUsersinDefaultOUTable.Add($obj)
+}
+if (($DefaultUsersinDefaultOUTable).Count -eq 0)
+{
+	
+	$Obj = [PSCustomObject]@{
+		
+		Information = 'Information: No Users were found in the default OU'
+	}
+	$DefaultUsersinDefaultOUTable.Add($obj)
+}
+
+
+#Expiring Accounts
+$LooseUsers = Search-ADAccount -AccountExpiring -UsersOnly
+
+foreach ($LooseUser in $LooseUsers)
+{
+	
+	$NameLoose = $LooseUser.Name
+	$UPNLoose = $LooseUser.UserPrincipalName
+	$ExpirationDate = $LooseUser.AccountExpirationDate
+	$enabled = $LooseUser.Enabled
+	
+	$obj = [PSCustomObject]@{
+		
+		'Name'			    = $NameLoose
+		'UserPrincipalName' = $UPNLoose
+		'Expiration Date'   = $ExpirationDate
+		'Enabled'		    = $enabled
+	}
+	
+	$ExpiringAccountsTable.Add($obj)
+}
+
+if (($ExpiringAccountsTable).Count -eq 0)
+{
+	
+	$Obj = [PSCustomObject]@{
+		
+		Information = 'Information: No Users were found to expire soon'
+	}
+	$ExpiringAccountsTable.Add($obj)
+}
+
+#Security Logs
+$SecurityLogs = Get-EventLog -Newest 7 -LogName "Security" | Where-Object { $_.Message -like "*An account*" }
+
+foreach ($SecurityLog in $SecurityLogs)
+{
+	
+	$TimeGenerated = $SecurityLog.TimeGenerated
+	$EntryType = $SecurityLog.EntryType
+	$Recipient = $SecurityLog.Message
+	
+	$obj = [PSCustomObject]@{
+		
+		'Time'    = $TimeGenerated
+		'Type'    = $EntryType
+		'Message' = $Recipient
+	}
+	
+	$SecurityEventTable.Add($obj)
+}
+
+if (($SecurityEventTable).Count -eq 0)
+{
+	
+	$Obj = [PSCustomObject]@{
+		
+		Information = 'Information: No logon security events were found'
+	}
+	$SecurityEventTable.Add($obj)
+}
+
+#Tenant Domain
+$Domains = Get-ADForest | Select-Object -ExpandProperty upnsuffixes | ForEach-Object{
+	
+	$obj = [PSCustomObject]@{
+		
+		'UPN Suffixes' = $_
+		Valid		   = "True"
+	}
+	
+	$DomainTable.Add($obj)
+}
+if (($DomainTable).Count -eq 0)
+{
+	
+	$Obj = [PSCustomObject]@{
+		
+		Information = 'Information: No UPN Suffixes were found'
+	}
+	$DomainTable.Add($obj)
+}
